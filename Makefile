@@ -4,12 +4,19 @@ BUILDID?=$(DATE)
 
 .PHONY: all
 all: packetbeat/deb packetbeat/rpm packetbeat/darwin packetbeat/win packetbeat/bin \
-	topbeat/deb topbeat/rpm topbeat/darwin topbeat/win topbeat/bin
+	topbeat/deb topbeat/rpm topbeat/darwin topbeat/win topbeat/bin \
+	filebeat/deb filebeat/rpm filebeat/darwin filebeat/win filebeat/bin
 
 
-.PHONY: packetbeat topbeat
-packetbeat topbeat: xgo-image build
-	cd build && xgo -image=tudorg/beats-builder -static \
+.PHONY: packetbeat topbeat filebeat
+packetbeat topbeat filebeat: build
+	# cross compile on ubuntu
+	cd build && xgo -image=tudorg/beats-builder \
+		-before-build=../xgo-scripts/$@_before_build.sh \
+		-branch $(RELEASE) \
+		github.com/elastic/$@
+	# linux builds on debian 6
+	cd build && xgo -image=tudorg/beats-builder-deb6 \
 		-before-build=../xgo-scripts/$@_before_build.sh \
 		-branch $(RELEASE) \
 		github.com/elastic/$@
@@ -22,34 +29,35 @@ packetbeat topbeat: xgo-image build
 	ARCH=386 RELEASE=$(RELEASE) BEAT=$(@D) BUILDID=$(BUILDID) ./platforms/centos/build.sh
 	ARCH=amd64 RELEASE=$(RELEASE) BEAT=$(@D) BUILDID=$(BUILDID) ./platforms/centos/build.sh
 
-%/darwin: % fpm-image
+%/darwin: %
 	ARCH=amd64 RELEASE=$(RELEASE) BEAT=$(@D) BUILDID=$(BUILDID) ./platforms/darwin/build.sh
 
-%/win: % fpm-image
+%/win: %
 	ARCH=amd64 RELEASE=$(RELEASE) BEAT=$(@D) BUILDID=$(BUILDID) ./platforms/windows/build.sh
 
-%/bin: % fpm-image
+%/bin: %
 	ARCH=386 RELEASE=$(RELEASE) BEAT=$(@D) BUILDID=$(BUILDID) ./platforms/binary/build.sh
 	ARCH=amd64 RELEASE=$(RELEASE) BEAT=$(@D) BUILDID=$(BUILDID) ./platforms/binary/build.sh
 
-.PHONY: deps xgo-image
+.PHONY: deps
 deps:
 	go get github.com/tsg/xgo
 	go get github.com/tsg/gotpl
 
 .PHONY: xgo-image
 xgo-image:
-	docker build -t tudorg/beats-builder docker/xgo-image/
+	cd docker/xgo-image/; ./build.sh
+	cd docker/xgo-image-deb6/; ./build.sh
 
 .PHONY: fpm-image
 fpm-image:
-	docker build -t tudorg/fpm docker/fpm-image/
+	docker build --rm=true -t tudorg/fpm docker/fpm-image/
 
 .PHONY: go-daemon-image
 go-daemon-image:
-	docker build -t tudorg/go-daemon docker/go-daemon/
+	docker build --rm=true -t tudorg/go-daemon docker/go-daemon/
 
-build/god-linux-386 build/god-linux-amd64: go-daemon-image
+build/god-linux-386 build/god-linux-amd64:
 	docker run -v $(shell pwd)/build:/build tudorg/go-daemon
 
 build:
@@ -60,11 +68,33 @@ s3-nightlies-upload: all
 	echo $(BUILDID) > build/upload/build_id.txt
 	aws s3 cp --recursive --acl public-read build/upload s3://beats-nightlies
 
+.PHONY: release-upload
+release-upload:
+	aws s3 cp --recursive --acl public-read build/upload s3://download.elasticsearch.org/beats/
+
 .PHONY: run-interactive
 run-interactive:
 	docker run -t -i -v $(shell pwd)/build:/build \
 		-v $(shell pwd)/xgo-scripts/:/scripts \
-		--entrypoint=bash tudorg/beats-builder
+		--entrypoint=bash tudorg/beats-builder-deb6
+
+.PHONY: images
+images: xgo-image fpm-image go-daemon-image
+
+.PHONY: push-images
+push-images:
+	docker push tudorg/beats-builder
+	docker push tudorg/beats-builder-deb6
+	docker push tudorg/fpm
+	docker push tudorg/go-daemon
+
+.PHONY: pull-images
+pull-images:
+	docker pull tudorg/beats-builder
+	docker pull tudorg/beats-builder-deb6
+	docker pull tudorg/fpm
+	docker pull tudorg/go-daemon
+
 .PHONY: clean
 clean:
 	rm -rf build/ || true

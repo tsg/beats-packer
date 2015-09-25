@@ -1,4 +1,4 @@
-FROM tudorg/xgo-latest
+FROM tudorg/xgo-1.5.1
 
 MAINTAINER Tudor Golubenco <tudor@elastic.co>
 
